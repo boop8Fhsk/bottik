@@ -1,971 +1,866 @@
-const STORAGE_KEY = "electronic-journal-v1";
+/* =========================================================
+   ЕЛЕКТРОННИЙ ЖУРНАЛ — SUPABASE VERSION
+   ========================================================= */
 
-let data = {
-    students: [],
-    journals: {}
-};
+const SUPABASE_URL = "https://kawosmrbmcpkhurnapoy.supabase.co";
 
+const SUPABASE_PUBLISHABLE_KEY =
+  "sb_publishable_0JZSbpUCLoFcbh6FZ8LRkQ_FR9AFDPr";
+
+const { createClient } = window.supabase;
+
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_PUBLISHABLE_KEY
+);
+
+
+/* =========================================================
+   СТАН
+   ========================================================= */
+
+let students = [];
+let attendance = {};
+
+let selectedDate = getToday();
+
+let currentStudentId = null;
 let editingStudentId = null;
 
 
-// ========================================
-// ЗАВАНТАЖЕННЯ ДАНИХ
-// ========================================
+/* =========================================================
+   DOM
+   ========================================================= */
 
-function loadData() {
-    const saved = localStorage.getItem(STORAGE_KEY);
+const dateInput = document.querySelector("#date");
 
-    if (!saved) {
-        data = {
-            students: [],
-            journals: {}
-        };
-        return;
-    }
+const studentsList =
+  document.querySelector("#students-list") ||
+  document.querySelector(".students-list");
 
-    try {
-        const parsed = JSON.parse(saved);
+const historyList =
+  document.querySelector("#history-list") ||
+  document.querySelector(".history-list");
 
-        data = {
-            students: Array.isArray(parsed.students)
-                ? parsed.students
-                : [],
 
-            journals:
-                parsed.journals &&
-                typeof parsed.journals === "object" &&
-                !Array.isArray(parsed.journals)
-                    ? parsed.journals
-                    : {}
-        };
+/* =========================================================
+   ДОПОМІЖНІ ФУНКЦІЇ
+   ========================================================= */
 
-    } catch (error) {
-        console.error("Помилка завантаження даних:", error);
+function getToday() {
+  const now = new Date();
 
-        data = {
-            students: [],
-            journals: {}
-        };
-    }
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 
-// ========================================
-// ЗБЕРЕЖЕННЯ ДАНИХ
-// ========================================
-
-function saveData() {
-    try {
-        localStorage.setItem(
-            STORAGE_KEY,
-            JSON.stringify(data)
-        );
-    } catch (error) {
-        console.error("Помилка збереження:", error);
-
-        alert(
-            "Не вдалося зберегти дані. " +
-            "Можливо, у браузері недостатньо місця."
-        );
-    }
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 
-// ========================================
-// ПОКАЗ СТОРІНОК
-// ========================================
+function showMessage(message, type = "success") {
+  let box = document.querySelector("#journal-message");
 
-function showPage(page) {
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "journal-message";
 
-    document.querySelectorAll(".page")
-        .forEach(element => {
-            element.classList.remove("active");
-        });
+    box.style.position = "fixed";
+    box.style.left = "50%";
+    box.style.bottom = "20px";
+    box.style.transform = "translateX(-50%)";
+    box.style.zIndex = "99999";
+    box.style.padding = "12px 18px";
+    box.style.borderRadius = "12px";
+    box.style.background = "#222";
+    box.style.color = "#fff";
+    box.style.fontSize = "15px";
+    box.style.boxShadow = "0 5px 20px rgba(0,0,0,.2)";
 
-    document.querySelectorAll(".bottom-nav button")
-        .forEach(element => {
-            element.classList.remove("active");
-        });
+    document.body.appendChild(box);
+  }
 
-    const pageElement =
-        document.getElementById(page);
+  box.textContent = message;
 
-    const navElement =
-        document.getElementById("nav-" + page);
+  if (type === "error") {
+    box.style.background = "#b42318";
+  } else {
+    box.style.background = "#167c3a";
+  }
 
-    if (pageElement) {
-        pageElement.classList.add("active");
-    }
+  clearTimeout(box._timer);
 
-    if (navElement) {
-        navElement.classList.add("active");
-    }
-
-
-    if (page === "journal") {
-        renderJournal();
-    }
-
-    if (page === "students") {
-        renderStudents();
-    }
-
-    if (page === "history") {
-        renderHistory();
-    }
+  box._timer = setTimeout(() => {
+    box.remove();
+  }, 3000);
 }
 
 
-// ========================================
-// СЬОГОДНІШНЯ ДАТА
-// ========================================
+/* =========================================================
+   SUPABASE — СТУДЕНТИ
+   ========================================================= */
 
-function today() {
+async function loadStudents() {
+  const { data, error } = await supabase
+    .from("students")
+    .select("*")
+    .order("created_at", { ascending: true });
 
-    const date = new Date();
+  if (error) {
+    console.error("Помилка завантаження студентів:", error);
+    showMessage(
+      "Не вдалося завантажити студентів: " + error.message,
+      "error"
+    );
+    return;
+  }
 
-    const year =
-        date.getFullYear();
+  students = data || [];
 
-    const month =
-        String(date.getMonth() + 1)
-            .padStart(2, "0");
-
-    const day =
-        String(date.getDate())
-            .padStart(2, "0");
-
-    return `${year}-${month}-${day}`;
+  renderStudents();
 }
 
 
-// ========================================
-// ЖУРНАЛ
-// ========================================
+/* =========================================================
+   SUPABASE — ВІДВІДУВАННЯ
+   ========================================================= */
 
-function renderJournal() {
+async function loadAttendanceForDate(date) {
+  const { data, error } = await supabase
+    .from("attendance")
+    .select("*")
+    .eq("date", date);
 
-    const dateInput =
-        document.getElementById("journalDate");
+  if (error) {
+    console.error("Помилка завантаження відвідування:", error);
+    showMessage(
+      "Не вдалося завантажити відвідування: " + error.message,
+      "error"
+    );
+    return;
+  }
 
-    const list =
-        document.getElementById("journalList");
+  attendance = {};
 
+  (data || []).forEach(row => {
+    attendance[row.student_id] = row.status;
+  });
 
-    if (!dateInput || !list) {
-        return;
-    }
-
-
-    // Якщо дата не вибрана
-    if (!dateInput.value) {
-        dateInput.value = today();
-    }
-
-
-    const date =
-        dateInput.value;
-
-
-    // Якщо студентів немає
-    if (data.students.length === 0) {
-
-        list.innerHTML = `
-            <div class="empty">
-                Спочатку додайте студентів
-                у розділі 👨‍🎓 Студенти.
-            </div>
-        `;
-
-        return;
-    }
-
-
-    // Створюємо журнал для дати,
-    // якщо його ще немає
-    if (!data.journals[date]) {
-        data.journals[date] = {};
-        saveData();
-    }
-
-
-    const journal =
-        data.journals[date];
-
-
-    list.innerHTML =
-        data.students.map(student => {
-
-            const status =
-                journal[student.id] || "";
-
-
-            return `
-                <div class="student-card">
-
-                    <div class="student-name">
-                        ${escapeHtml(student.name)}
-                    </div>
-
-
-                    <div class="status-buttons">
-
-                        <button
-                            class="status-btn ${
-                                status === "present"
-                                    ? "active"
-                                    : ""
-                            }"
-                            onclick="setStatus(
-                                '${student.id}',
-                                'present'
-                            )"
-                        >
-                            ✅
-                            <small>
-                                Присутній
-                            </small>
-                        </button>
-
-
-                        <button
-                            class="status-btn ${
-                                status === "absent"
-                                    ? "active"
-                                    : ""
-                            }"
-                            onclick="setStatus(
-                                '${student.id}',
-                                'absent'
-                            )"
-                        >
-                            ❌
-                            <small>
-                                Відсутній
-                            </small>
-                        </button>
-
-
-                        <button
-                            class="status-btn ${
-                                status === "sick"
-                                    ? "active"
-                                    : ""
-                            }"
-                            onclick="setStatus(
-                                '${student.id}',
-                                'sick'
-                            )"
-                        >
-                            хв
-                            <small>
-                                Хворіє
-                            </small>
-                        </button>
-
-
-                        <button
-                            class="status-btn ${
-                                status === "reason"
-                                    ? "active"
-                                    : ""
-                            }"
-                            onclick="setStatus(
-                                '${student.id}',
-                                'reason'
-                            )"
-                        >
-                            п/п
-                            <small>
-                                Поважна причина
-                            </small>
-                        </button>
-
-                    </div>
-
-                </div>
-            `;
-
-        }).join("");
+  renderStudents();
 }
 
 
-// ========================================
-// ВСТАНОВЛЕННЯ ВІДМІТКИ
-// ========================================
+async function loadAllAttendance() {
+  const { data, error } = await supabase
+    .from("attendance")
+    .select("*")
+    .order("date", { ascending: false });
 
-function setStatus(studentId, status) {
+  if (error) {
+    console.error("Помилка завантаження історії:", error);
+    showMessage(
+      "Не вдалося завантажити історію: " + error.message,
+      "error"
+    );
+    return;
+  }
 
-    const dateInput =
-        document.getElementById("journalDate");
-
-
-    if (!dateInput) {
-        return;
-    }
-
-
-    const date =
-        dateInput.value;
-
-
-    if (!date) {
-        alert("Спочатку виберіть дату.");
-        return;
-    }
-
-
-    // Створюємо журнал цієї дати
-    if (!data.journals[date]) {
-        data.journals[date] = {};
-    }
-
-
-    // Якщо натиснули на вже активну кнопку —
-    // відмітку знімаємо
-    if (
-        data.journals[date][studentId] === status
-    ) {
-
-        delete data.journals[date][studentId];
-
-    } else {
-
-        data.journals[date][studentId] = status;
-
-    }
-
-
-    saveData();
-
-    renderJournal();
-
-    // Якщо історія вже була відкрита,
-    // вона теж буде оновлена наступного разу
+  renderHistory(data || []);
 }
 
 
-// ========================================
-// СТУДЕНТИ
-// ========================================
+/* =========================================================
+   ДОДАТИ СТУДЕНТА
+   ========================================================= */
+
+async function addStudent(name) {
+  name = String(name || "").trim();
+
+  if (!name) {
+    showMessage("Введи ім'я та прізвище", "error");
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("students")
+    .insert({
+      name: name
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Помилка додавання студента:", error);
+
+    showMessage(
+      "Не вдалося додати студента: " + error.message,
+      "error"
+    );
+
+    return;
+  }
+
+  students.push(data);
+
+  renderStudents();
+
+  showMessage("Студента додано");
+
+  closeStudentModal();
+}
+
+
+/* =========================================================
+   РЕДАГУВАТИ СТУДЕНТА
+   ========================================================= */
+
+async function updateStudent(id, name) {
+  name = String(name || "").trim();
+
+  if (!name) {
+    showMessage("Ім'я не може бути порожнім", "error");
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("students")
+    .update({
+      name: name
+    })
+    .eq("id", id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Помилка редагування студента:", error);
+
+    showMessage(
+      "Не вдалося змінити студента: " + error.message,
+      "error"
+    );
+
+    return;
+  }
+
+  const index = students.findIndex(student => student.id === id);
+
+  if (index !== -1) {
+    students[index] = data;
+  }
+
+  renderStudents();
+
+  showMessage("Дані студента змінено");
+
+  closeStudentModal();
+}
+
+
+/* =========================================================
+   ВИДАЛИТИ СТУДЕНТА
+   ========================================================= */
+
+async function deleteStudent(id) {
+  const student = students.find(s => s.id === id);
+
+  if (!student) {
+    return;
+  }
+
+  const confirmed = confirm(
+    `Видалити студента "${student.name}"?`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  const { error } = await supabase
+    .from("students")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error("Помилка видалення студента:", error);
+
+    showMessage(
+      "Не вдалося видалити студента: " + error.message,
+      "error"
+    );
+
+    return;
+  }
+
+  students = students.filter(student => student.id !== id);
+
+  delete attendance[id];
+
+  renderStudents();
+
+  showMessage("Студента видалено");
+}
+
+
+/* =========================================================
+   ВІДМІТКА ВІДВІДУВАННЯ
+   ========================================================= */
+
+async function setAttendance(studentId, status) {
+  const currentStatus = attendance[studentId];
+
+  /*
+     Якщо натиснули на вже активну відмітку —
+     видаляємо її.
+  */
+
+  if (currentStatus === status) {
+    const { error } = await supabase
+      .from("attendance")
+      .delete()
+      .eq("student_id", studentId)
+      .eq("date", selectedDate);
+
+    if (error) {
+      console.error("Помилка видалення відмітки:", error);
+
+      showMessage(
+        "Не вдалося змінити відмітку: " + error.message,
+        "error"
+      );
+
+      return;
+    }
+
+    delete attendance[studentId];
+
+    renderStudents();
+
+    return;
+  }
+
+
+  /*
+     Нова або змінена відмітка.
+  */
+
+  const { data, error } = await supabase
+    .from("attendance")
+    .upsert(
+      {
+        student_id: studentId,
+        date: selectedDate,
+        status: status
+      },
+      {
+        onConflict: "student_id,date"
+      }
+    )
+    .select()
+    .single();
+
+  if (error) {
+    console.error("Помилка збереження відвідування:", error);
+
+    showMessage(
+      "Не вдалося зберегти відмітку: " + error.message,
+      "error"
+    );
+
+    return;
+  }
+
+  attendance[studentId] = data.status;
+
+  renderStudents();
+
+  showMessage("Відмітку збережено");
+}
+
+
+/* =========================================================
+   РЕНДЕР СТУДЕНТІВ
+   ========================================================= */
 
 function renderStudents() {
+  if (!studentsList) {
+    return;
+  }
 
-    const list =
-        document.getElementById("studentsList");
+  if (students.length === 0) {
+    studentsList.innerHTML = `
+      <div class="empty-state">
+        Немає доданих студентів
+      </div>
+    `;
 
+    return;
+  }
 
-    if (!list) {
-        return;
-    }
+  studentsList.innerHTML = students
+    .map(student => {
+      const status = attendance[student.id];
 
+      return `
+        <div class="student-card" data-id="${student.id}">
 
-    if (data.students.length === 0) {
-
-        list.innerHTML = `
-            <div class="empty">
-                Студентів поки немає.
+          <div class="student-info">
+            <div class="student-name">
+              ${escapeHtml(student.name)}
             </div>
-        `;
+          </div>
 
-        return;
-    }
+          <div class="attendance-buttons">
 
+            <button
+              class="attendance-btn ${status === "present" ? "active" : ""}"
+              data-action="attendance"
+              data-status="present"
+              data-id="${student.id}"
+              title="Присутній"
+            >
+              ✅
+            </button>
 
-    list.innerHTML =
-        data.students.map(student => {
+            <button
+              class="attendance-btn ${status === "absent" ? "active" : ""}"
+              data-action="attendance"
+              data-status="absent"
+              data-id="${student.id}"
+              title="Відсутній"
+            >
+              ❌
+            </button>
 
-            return `
-                <div class="student-row">
+            <button
+              class="attendance-btn ${status === "sick" ? "active" : ""}"
+              data-action="attendance"
+              data-status="sick"
+              data-id="${student.id}"
+              title="Хворіє"
+            >
+              🤒
+            </button>
 
-                    <strong>
-                        ${escapeHtml(student.name)}
-                    </strong>
+            <button
+              class="attendance-btn ${status === "reason" ? "active" : ""}"
+              data-action="attendance"
+              data-status="reason"
+              data-id="${student.id}"
+              title="Поважна причина"
+            >
+              📝
+            </button>
 
+          </div>
 
-                    <div class="student-actions">
+          <div class="student-actions">
 
-                        <button
-                            class="edit"
-                            onclick="editStudent(
-                                '${student.id}'
-                            )"
-                        >
-                            ✏️
-                        </button>
+            <button
+              class="edit-student-btn"
+              data-action="edit"
+              data-id="${student.id}"
+            >
+              ✏️
+            </button>
 
+            <button
+              class="delete-student-btn"
+              data-action="delete"
+              data-id="${student.id}"
+            >
+              🗑️
+            </button>
 
-                        <button
-                            class="delete"
-                            onclick="deleteStudent(
-                                '${student.id}'
-                            )"
-                        >
-                            🗑️
-                        </button>
+          </div>
 
-                    </div>
-
-                </div>
-            `;
-
-        }).join("");
+        </div>
+      `;
+    })
+    .join("");
 }
 
 
-// ========================================
-// ВІДКРИТИ ФОРМУ ДОДАВАННЯ
-// ========================================
+/* =========================================================
+   ІСТОРІЯ
+   ========================================================= */
 
-function openStudentForm() {
+function renderHistory(rows) {
+  if (!historyList) {
+    return;
+  }
 
-    editingStudentId = null;
+  if (!rows.length) {
+    historyList.innerHTML = `
+      <div class="empty-state">
+        Історія поки порожня
+      </div>
+    `;
 
+    return;
+  }
 
-    const title =
-        document.getElementById("modalTitle");
+  const grouped = {};
 
-    const input =
-        document.getElementById("studentName");
-
-    const modal =
-        document.getElementById("studentModal");
-
-
-    if (title) {
-        title.textContent = "Додати студента";
+  rows.forEach(row => {
+    if (!grouped[row.date]) {
+      grouped[row.date] = [];
     }
 
-
-    if (input) {
-        input.value = "";
-    }
-
-
-    if (modal) {
-        modal.classList.add("show");
-    }
-
-
-    setTimeout(() => {
-
-        if (input) {
-            input.focus();
-        }
-
-    }, 100);
-}
-
-
-// ========================================
-// ЗАКРИТИ ФОРМУ
-// ========================================
-
-function closeStudentForm() {
-
-    const modal =
-        document.getElementById("studentModal");
-
-
-    if (modal) {
-        modal.classList.remove("show");
-    }
-
-
-    editingStudentId = null;
-}
-
-
-// ========================================
-// ЗБЕРЕГТИ СТУДЕНТА
-// ========================================
-
-function saveStudent() {
-
-    const input =
-        document.getElementById("studentName");
-
-
-    if (!input) {
-        return;
-    }
-
-
-    const name =
-        input.value.trim();
-
-
-    if (!name) {
-
-        alert(
-            "Введіть ім'я та прізвище."
-        );
-
-        return;
-    }
-
-
-    // РЕДАГУВАННЯ
-    if (editingStudentId) {
-
-        const student =
-            data.students.find(
-                item =>
-                    item.id === editingStudentId
-            );
-
-
-        if (student) {
-            student.name = name;
-        }
-
-
-    // НОВИЙ СТУДЕНТ
-    } else {
-
-        data.students.push({
-
-            id: createId(),
-
-            name: name
-
-        });
-
-    }
-
-
-    saveData();
-
-    closeStudentForm();
-
-    renderStudents();
-
-    renderJournal();
-
-    renderHistory();
-}
-
-
-// ========================================
-// РЕДАГУВАННЯ СТУДЕНТА
-// ========================================
-
-function editStudent(id) {
-
-    const student =
-        data.students.find(
-            item => item.id === id
-        );
-
-
-    if (!student) {
-        return;
-    }
-
-
-    editingStudentId = id;
-
-
-    const title =
-        document.getElementById("modalTitle");
-
-    const input =
-        document.getElementById("studentName");
-
-    const modal =
-        document.getElementById("studentModal");
-
-
-    if (title) {
-        title.textContent =
-            "Редагувати студента";
-    }
-
-
-    if (input) {
-        input.value = student.name;
-    }
-
-
-    if (modal) {
-        modal.classList.add("show");
-    }
-
-
-    setTimeout(() => {
-
-        if (input) {
-            input.focus();
-        }
-
-    }, 100);
-}
-
-
-// ========================================
-// ВИДАЛЕННЯ СТУДЕНТА
-// ========================================
-
-function deleteStudent(id) {
-
-    const student =
-        data.students.find(
-            item => item.id === id
-        );
-
-
-    if (!student) {
-        return;
-    }
-
-
-    const ok =
-        confirm(
-            `Видалити студента "${student.name}"?`
-        );
-
-
-    if (!ok) {
-        return;
-    }
-
-
-    // Видаляємо тільки зі списку студентів.
-    //
-    // Старі відмітки НЕ видаляємо,
-    // щоб історія за минулі дати
-    // залишилася.
-    data.students =
-        data.students.filter(
-            item => item.id !== id
-        );
-
-
-    saveData();
-
-    renderStudents();
-
-    renderJournal();
-
-    renderHistory();
-}
-
-
-// ========================================
-// ІСТОРІЯ
-// ========================================
-
-function renderHistory() {
-
-    const list =
-        document.getElementById("historyList");
-
-
-    if (!list) {
-        return;
-    }
-
-
-    const dates =
-        Object.keys(data.journals || {})
-            .filter(date => {
-                return (
-                    data.journals[date] &&
-                    typeof data.journals[date] === "object"
-                );
-            })
-            .sort()
-            .reverse();
-
-
-    if (dates.length === 0) {
-
-        list.innerHTML = `
-            <div class="empty">
-                Журналів ще немає.
+    grouped[row.date].push(row);
+  });
+
+  const dates = Object.keys(grouped).sort(
+    (a, b) => b.localeCompare(a)
+  );
+
+  historyList.innerHTML = dates
+    .map(date => {
+      const dateRows = grouped[date];
+
+      const studentsRows = dateRows
+        .map(row => {
+          const student = students.find(
+            student => student.id === row.student_id
+          );
+
+          const studentName = student
+            ? student.name
+            : "Студент видалений";
+
+          const statusText = getStatusText(row.status);
+
+          return `
+            <div class="history-student">
+              <span>
+                ${escapeHtml(studentName)}
+              </span>
+
+              <span>
+                ${statusText}
+              </span>
             </div>
-        `;
+          `;
+        })
+        .join("");
 
-        return;
-    }
+      return `
+        <div class="history-date">
 
+          <div class="history-date-title">
+            📅 ${formatDate(date)}
+          </div>
 
-    list.innerHTML =
-        dates.map(date => {
+          <div class="history-students">
+            ${studentsRows}
+          </div>
 
-            const journal =
-                data.journals[date] || {};
-
-
-            let present = 0;
-            let absent = 0;
-            let sick = 0;
-            let reason = 0;
-
-
-            Object.values(journal)
-                .forEach(status => {
-
-                    if (status === "present") {
-                        present++;
-                    }
-
-                    if (status === "absent") {
-                        absent++;
-                    }
-
-                    if (status === "sick") {
-                        sick++;
-                    }
-
-                    if (status === "reason") {
-                        reason++;
-                    }
-
-                });
-
-
-            return `
-                <div
-                    class="history-item"
-                    onclick="openHistory('${date}')"
-                >
-
-                    <strong>
-                        ${formatDate(date)}
-                    </strong>
-
-
-                    <div class="history-summary">
-
-                        ✅ ${present}
-
-                        &nbsp;&nbsp;
-
-                        ❌ ${absent}
-
-                        &nbsp;&nbsp;
-
-                        хв ${sick}
-
-                        &nbsp;&nbsp;
-
-                        п/п ${reason}
-
-                    </div>
-
-                </div>
-            `;
-
-        }).join("");
+        </div>
+      `;
+    })
+    .join("");
 }
 
 
-// ========================================
-// ВІДКРИТИ ДЕНЬ З ІСТОРІЇ
-// ========================================
+function getStatusText(status) {
+  switch (status) {
+    case "present":
+      return "✅ Присутній";
 
-function openHistory(date) {
+    case "absent":
+      return "❌ Відсутній";
 
-    const dateInput =
-        document.getElementById("journalDate");
+    case "sick":
+      return "🤒 Хворіє";
 
+    case "reason":
+      return "📝 Поважна причина";
 
-    if (dateInput) {
-        dateInput.value = date;
-    }
-
-
-    showPage("journal");
+    default:
+      return status || "";
+  }
 }
 
-
-// ========================================
-// ФОРМАТУВАННЯ ДАТИ
-// ========================================
 
 function formatDate(date) {
+  const parts = date.split("-");
 
-    if (!date) {
-        return "";
-    }
+  if (parts.length !== 3) {
+    return date;
+  }
 
-
-    const parts =
-        date.split("-");
-
-
-    if (parts.length !== 3) {
-        return date;
-    }
-
-
-    return `
-        ${parts[2]}.
-        ${parts[1]}.
-        ${parts[0]}
-    `.replace(/\s/g, "");
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
 }
 
 
-// ========================================
-// СТВОРЕННЯ ID
-// ========================================
+/* =========================================================
+   МОДАЛЬНЕ ВІКНО СТУДЕНТА
+   ========================================================= */
 
-function createId() {
+function openStudentModal(student = null) {
+  const modal =
+    document.querySelector("#student-modal") ||
+    document.querySelector(".modal");
 
-    // Сучасний браузер
-    if (
-        typeof crypto !== "undefined" &&
-        typeof crypto.randomUUID === "function"
-    ) {
-        return crypto.randomUUID();
+  if (!modal) {
+    return;
+  }
+
+  editingStudentId = student ? student.id : null;
+
+  const input =
+    modal.querySelector("input") ||
+    document.querySelector("#student-name");
+
+  if (input) {
+    input.value = student ? student.name : "";
+    input.focus();
+  }
+
+  modal.classList.add("show");
+  modal.classList.add("active");
+}
+
+
+function closeStudentModal() {
+  const modal =
+    document.querySelector("#student-modal") ||
+    document.querySelector(".modal");
+
+  if (!modal) {
+    return;
+  }
+
+  modal.classList.remove("show");
+  modal.classList.remove("active");
+
+  editingStudentId = null;
+}
+
+
+/* =========================================================
+   ЗБЕРЕЖЕННЯ СТУДЕНТА З МОДАЛЬНОГО ВІКНА
+   ========================================================= */
+
+async function saveStudentFromModal() {
+  const modal =
+    document.querySelector("#student-modal") ||
+    document.querySelector(".modal");
+
+  const input =
+    modal?.querySelector("input") ||
+    document.querySelector("#student-name");
+
+  if (!input) {
+    return;
+  }
+
+  const name = input.value.trim();
+
+  if (!name) {
+    showMessage("Введи ім'я та прізвище", "error");
+    return;
+  }
+
+  if (editingStudentId) {
+    await updateStudent(editingStudentId, name);
+  } else {
+    await addStudent(name);
+  }
+}
+
+
+/* =========================================================
+   ПОДІЇ
+   ========================================================= */
+
+document.addEventListener("click", async event => {
+  const button = event.target.closest("[data-action]");
+
+  if (button) {
+    const action = button.dataset.action;
+    const id = button.dataset.id;
+
+    if (action === "attendance") {
+      const status = button.dataset.status;
+
+      await setAttendance(id, status);
+      return;
     }
 
+    if (action === "edit") {
+      const student = students.find(
+        student => student.id === id
+      );
 
-    // Запасний варіант
-    return (
-        Date.now().toString(36) +
-        Math.random()
-            .toString(36)
-            .substring(2)
+      if (student) {
+        openStudentModal(student);
+      }
+
+      return;
+    }
+
+    if (action === "delete") {
+      await deleteStudent(id);
+      return;
+    }
+  }
+
+
+  /*
+     Кнопка "Додати"
+  */
+
+  const addButton =
+    event.target.closest("#add-student") ||
+    event.target.closest(".add-student") ||
+    event.target.closest("[data-add-student]");
+
+  if (addButton) {
+    openStudentModal();
+    return;
+  }
+
+
+  /*
+     Закриття модального вікна
+  */
+
+  const closeButton =
+    event.target.closest("[data-close-modal]") ||
+    event.target.closest(".modal-close") ||
+    event.target.closest(".close-modal");
+
+  if (closeButton) {
+    closeStudentModal();
+    return;
+  }
+
+
+  /*
+     Збереження студента
+  */
+
+  const saveButton =
+    event.target.closest("#save-student") ||
+    event.target.closest("[data-save-student]");
+
+  if (saveButton) {
+    await saveStudentFromModal();
+    return;
+  }
+
+
+  /*
+     Відкрити історію
+  */
+
+  const historyButton =
+    event.target.closest("#history-button") ||
+    event.target.closest("[data-history]");
+
+  if (historyButton) {
+    await loadAllAttendance();
+    return;
+  }
+});
+
+
+/* =========================================================
+   ENTER У ПОЛІ ІМЕНІ
+   ========================================================= */
+
+document.addEventListener("keydown", async event => {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  const target = event.target;
+
+  if (
+    target.matches("#student-name") ||
+    target.matches(".student-modal input") ||
+    target.matches(".modal input")
+  ) {
+    event.preventDefault();
+
+    await saveStudentFromModal();
+  }
+});
+
+
+/* =========================================================
+   ЗМІНА ДАТИ
+   ========================================================= */
+
+if (dateInput) {
+  dateInput.value = selectedDate;
+
+  dateInput.addEventListener("change", async event => {
+    selectedDate = event.target.value || getToday();
+
+    await loadAttendanceForDate(selectedDate);
+  });
+}
+
+
+/* =========================================================
+   ЗАКРИТТЯ МОДАЛЬНОГО ВІКНА ПО ФОНУ
+   ========================================================= */
+
+document.addEventListener("click", event => {
+  const modal = event.target.closest(".modal");
+
+  if (!modal) {
+    return;
+  }
+
+  if (event.target === modal) {
+    closeStudentModal();
+  }
+});
+
+
+/* =========================================================
+   ПОЧАТКОВЕ ЗАВАНТАЖЕННЯ
+   ========================================================= */
+
+async function initJournal() {
+  console.log("📖 Запуск електронного журналу...");
+
+  try {
+    await loadStudents();
+    await loadAttendanceForDate(selectedDate);
+
+    console.log("✅ Журнал підключено до Supabase");
+  } catch (error) {
+    console.error("Критична помилка:", error);
+
+    showMessage(
+      "Не вдалося підключити журнал до Supabase",
+      "error"
     );
+  }
 }
 
 
-// ========================================
-// БЕЗПЕЧНИЙ HTML
-// ========================================
-
-function escapeHtml(text) {
-
-    return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;")
-        .replaceAll("'", "&#039;");
-}
+initJournal();
 
 
-// ========================================
-// ЗАКРИТТЯ МОДАЛЬНОГО ВІКНА
-// ПРИ НАТИСКАННІ ПОЗА ФОРМОЮ
-// ========================================
+/* =========================================================
+   ПЕРЕВІРКА ПІДКЛЮЧЕННЯ
+   ========================================================= */
 
-document.addEventListener(
-    "click",
-    function(event) {
+window.journalSupabase = supabase;
 
-        const modal =
-            document.getElementById("studentModal");
-
-
-        if (!modal) {
-            return;
-        }
-
-
-        if (
-            event.target === modal
-        ) {
-            closeStudentForm();
-        }
-
-    }
-);
-
-
-// ========================================
-// ENTER У ФОРМІ
-// ========================================
-
-document.addEventListener(
-    "keydown",
-    function(event) {
-
-        if (event.key !== "Enter") {
-            return;
-        }
-
-
-        const modal =
-            document.getElementById("studentModal");
-
-
-        if (
-            modal &&
-            modal.classList.contains("show")
-        ) {
-            saveStudent();
-        }
-
-    }
-);
-
-
-// ========================================
-// ЗМІНА ДАТИ
-// ========================================
-
-const journalDate =
-    document.getElementById("journalDate");
-
-
-if (journalDate) {
-
-    journalDate.addEventListener(
-        "change",
-        function() {
-
-            renderJournal();
-
-        }
-    );
-
-}
-
-
-// ========================================
-// ЗАПУСК ПРОГРАМИ
-// ========================================
-
-loadData();
-
-
-// Встановлюємо сьогоднішню дату
-if (journalDate) {
-    journalDate.value = today();
-}
-
-
-// Відкриваємо журнал
-showPage("journal");
-
-
-// ========================================
-// PWA SERVICE WORKER
-// ========================================
-
-if ("serviceWorker" in navigator) {
-
-    window.addEventListener(
-        "load",
-        function() {
-
-            navigator.serviceWorker
-                .register("/sw.js")
-                .catch(error => {
-
-                    console.log(
-                        "Service Worker error:",
-                        error
-                    );
-
-                });
-
-        }
-    );
-
-}
-```
+console.log("☁️ Supabase URL:", SUPABASE_URL);
+console.log("☁️ Електронний журнал працює через Supabase");
