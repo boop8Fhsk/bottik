@@ -1,5 +1,4 @@
-const CACHE_NAME = "journal-v1";
-
+const CACHE_NAME = "journal-v3";
 const FILES = [
     "/",
     "/index.html",
