@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover">
+
+    <meta name="theme-color" content="#2563eb">
+
+    <title>Електронний журнал</title>
+
+    <link rel="manifest" href="/manifest.json">
+    <link rel="stylesheet" href="/style.css">
+</head>
+
+<body>
+
+<header class="topbar">
+    <h1>📖 Електронний журнал</h1>
+</header>
+
+<main>
+
+    <!-- ЖУРНАЛ -->
+    <section id="journal" class="page active">
+
+        <div class="date-box">
+            <label for="journalDate">Дата</label>
+            <input type="date" id="journalDate">
+        </div>
+
+        <div id="journalList"></div>
+
+    </section>
+
+
+    <!-- СТУДЕНТИ -->
+    <section id="students" class="page">
+
+        <div class="section-header">
+            <h2>👨‍🎓 Студенти</h2>
+            <button class="primary" onclick="openStudentForm()">
+                ➕ Додати
+            </button>
+        </div>
+
+        <div id="studentsList"></div>
+
+    </section>
+
+
+    <!-- ІСТОРІЯ -->
+    <section id="history" class="page">
+
+        <h2>📅 Історія</h2>
+
+        <div id="historyList"></div>
+
+    </section>
+
+</main>
+
+
+<!-- ФОРМА СТУДЕНТА -->
+
+<div id="studentModal" class="modal">
+
+    <div class="modal-content">
+
+        <h2 id="modalTitle">Додати студента</h2>
+
+        <input
+            type="text"
+            id="studentName"
+            placeholder="Ім'я та прізвище"
+        >
+
+        <div class="modal-buttons">
+            <button class="cancel" onclick="closeStudentForm()">
+                Скасувати
+            </button>
+
+            <button class="primary" onclick="saveStudent()">
+                Зберегти
+            </button>
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- НИЖНЄ МЕНЮ -->
+
+<nav class="bottom-nav">
+
+    <button onclick="showPage('journal')" id="nav-journal">
+        📖
+        <span>Журнал</span>
+    </button>
+
+    <button onclick="showPage('students')" id="nav-students">
+        👨‍🎓
+        <span>Студенти</span>
+    </button>
+
+    <button onclick="showPage('history')" id="nav-history">
+        📅
+        <span>Історія</span>
+    </button>
+
+</nav>
+
+<script src="/app.js"></script>
+
+</body>
+</html>
